@@ -305,7 +305,6 @@ select,input[type=text],input[type=tel],textarea{background:var(--surface-2);bor
       <div class="card-head"><h3>Today</h3><span class="label">Steps per hour</span></div>
       <div class="stats" id="stats"></div>
       <svg id="chart" viewBox="0 0 340 150" width="100%" role="img" aria-label="Steps per hour today"></svg>
-      <p class="note">Before 09:30 is example data. The simulation fills in the rest.</p>
     </section>
 
     <section class="card">
@@ -530,17 +529,13 @@ document.addEventListener("keydown", e => { if (e.key === "Escape" && picking) s
 /* ---------- state ---------- */
 let S, speed = 1;
 function freshState(){
-  const steps = new Array(24).fill(0); steps[7] = 420; steps[8] = 860; steps[9] = 310;
+  const steps = new Array(24).fill(0);
   return {
     t: 9.5*3600, pos: P(HOMEN), node: HOMEN, route: [], plan: [], leg: null, dwellUntil: null,
     place: "home", arrivedT: 9.5*3600 - 3000, state: "home", lastMoveT: 9.5*3600, heading: 0,
     battery: 82, steps, timeOut: 0, leftCount: 0, trail: [], inside: true, nearWarned: false,
     inactiveAlerted: false, fallIn: null,
-    alerts: [], events: [
-      {t: 7*3600 + 8*60, text: "Up and moving at home", kind: "example"},
-      {t: 8*3600 + 15*60, text: "Sat out on the verandah", kind: "example"},
-      {t: 8*3600 + 40*60, text: "Back indoors", kind: "example"},
-    ], alertVer: 1, evVer: 1, nextId: 1
+    alerts: [], events: [], alertVer: 1, evVer: 1, nextId: 1
   };
 }
 function event(text, kind = "move"){ S.events.push({t: S.t, text, kind}); S.evVer++; }
@@ -721,6 +716,7 @@ function renderAlerts(){
     </li>`).join("");
 }
 function renderTimeline(){
+  if (!S.events.length){ $("#timeline").innerHTML = `<li><p class="empty">Nothing yet today. Places he stops at and zone crossings will appear here.</p></li>`; return; }
   $("#timeline").innerHTML = S.events.slice().reverse().map(e => `<li class="${e.kind}"><time>${fmt(e.t)}</time><span class="dot"></span><span>${esc(e.text)}</span></li>`).join("");
 }
 function renderStats(){
@@ -739,8 +735,7 @@ function renderChart(){
   [0, max/2, max].forEach(v => { const y = T + Hh - v/max*Hh; s += `<line x1="${L}" x2="${L+W}" y1="${y}" y2="${y}" stroke="var(--line)" stroke-width="1"/><text x="${L-5}" y="${y+3}" text-anchor="end">${v >= 1000 ? (v/1000) + "k" : v}</text>`; });
   vals.forEach((v,i) => {
     const h = Math.max(v > 0 ? 2 : 0, v/max*Hh), x = L + i*bw + 2, hr = H0 + i;
-    const example = hr < 9 || (hr === 9 && S.t < 10*3600);
-    s += `<rect x="${x.toFixed(1)}" y="${(T+Hh-h).toFixed(1)}" width="${(bw-4).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${example && hr !== cur ? "var(--line)" : "var(--accent)"}" fill-opacity="${hr === cur ? 1 : .55}"/>`;
+    s += `<rect x="${x.toFixed(1)}" y="${(T+Hh-h).toFixed(1)}" width="${(bw-4).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="var(--accent)" fill-opacity="${hr === cur ? 1 : .55}"/>`;
     if (hr % 3 === 0) s += `<text x="${(x+(bw-4)/2).toFixed(1)}" y="${T+Hh+14}" text-anchor="middle">${String(hr).padStart(2,"0")}</text>`;
   });
   $("#chart").innerHTML = s;
