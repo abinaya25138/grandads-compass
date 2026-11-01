@@ -284,7 +284,7 @@ select,input[type=text],input[type=tel],textarea{background:var(--surface-2);bor
         <div class="set">
           <div class="row">
             <div class="row-top"><span id="homeName" style="font-weight:700">Home</span><button class="btn small" type="button" id="setHome">Set home on map</button></div>
-            <p class="hint" id="homeHint">This is an example spot. Set your real street. It's saved only in this browser.</p>
+            <p class="hint" id="homeHint">Sahakarnagar, Bengaluru</p>
           </div>
           <div class="row">
             <div class="row-top"><label for="radius">Safe zone around home</label><span class="mono" id="radiusOut">500 m</span></div>
@@ -321,8 +321,7 @@ select,input[type=text],input[type=tel],textarea{background:var(--surface-2);bor
           <label>Age <input type="text" id="pAge" value="84"></label>
         </div>
         <label>What he's wearing today <input type="text" id="pWear" value="White shirt, grey trousers, brown sandals"></label>
-        <label>Tips for whoever finds him <textarea id="pNotes">May say he is going to the office. A calm voice helps. Ask him about his family.</textarea></label>
-        <label>Family contact number <input type="tel" id="pPhone" placeholder="e.g. 98450 12345"></label>
+        <label>Tips for whoever finds him <textarea id="pNotes">He speaks Tamil. Talk to him calmly in Tamil and stay with him until family arrives.</textarea></label>
         <label>Ready to send to police or neighbours <textarea id="desc" readonly></textarea></label>
         <div class="acts"><button class="btn primary" type="button" id="copy">Copy description</button><a id="gmaps" href="https://maps.google.com/" target="_blank" rel="noopener">Open his spot in Google Maps</a><span class="copied" id="copied" hidden>Copied</span></div>
       </div>
@@ -387,7 +386,7 @@ function streetAt(p){
 /* ---------- landmarks & home ---------- */
 const LMS = D.lms.map((l, i) => ({...l, id: i, node: nearestNode(l.x, l.y)}));
 const LM_BY_NODE = new Map(LMS.map(l => [l.node, l]));
-const DEFAULT_HOME = fromLL(13.06125, 77.58395);
+const DEFAULT_HOME = fromLL(13.0628, 77.5855);
 function placeName(node){ return node === HOMEN ? "home" : LM_BY_NODE.get(node)?.name ?? null; }
 function areaName(p){ let b = null, bd = Infinity; for (const [n,x,y] of D.places){ const d = Math.hypot(p.x-x, p.y-y); if (d < bd){ bd = d; b = n; } } return b; }
 function spotText(p){
@@ -416,7 +415,7 @@ const store = {
 const settings = { radius: store.get("radius",500), inact: store.get("inact",20), sound: store.get("sound",false), home: store.get("home",null) };
 let HOMEN = settings.home ? nearestNode(...Object.values(fromLL(settings.home.lat, settings.home.lon))) : nearestNode(DEFAULT_HOME.x, DEFAULT_HOME.y);
 $("#radius").value = settings.radius; $("#inact").value = settings.inact; $("#sound").checked = settings.sound;
-["pName","pAge","pWear","pNotes","pPhone"].forEach(id => { const v = store.get(id,null); if (v !== null) $("#"+id).value = v; $("#"+id).addEventListener("input", e => { store.set(id, e.target.value); renderDesc(); }); });
+["pName","pAge","pWear","pNotes"].forEach(id => { const v = store.get(id,null); if (v !== null) $("#"+id).value = v; $("#"+id).addEventListener("input", e => { store.set(id, e.target.value); renderDesc(); }); });
 const who = () => $("#pName").value.trim() || "Grandad";
 
 /* ---------- draw map ---------- */
@@ -471,8 +470,8 @@ function placeHome(){
   const h = P(HOMEN);
   homeMk.dataset.x = h.x; homeMk.dataset.y = h.y;
   $("#zone").setAttribute("cx", h.x); $("#zone").setAttribute("cy", h.y);
-  $("#homeName").textContent = "Home: " + spotText({x: h.x + 25, y: h.y}).replace(/^on |^near |^at /, "");
-  $("#homeHint").textContent = settings.home ? "Saved only in this browser." : "This is an example spot. Set your real street. It's saved only in this browser.";
+  $("#homeName").textContent = "Home: " + (settings.home ? spotText({x: h.x + 25, y: h.y}).replace(/^on |^near |^at /, "") : "11th Cross, 13th Main");
+  $("#homeHint").textContent = settings.home ? "Saved only in this browser." : "Sahakarnagar, Bengaluru";
 }
 
 /* ---------- pan & zoom ---------- */
@@ -588,8 +587,8 @@ function farNode(minD){
 }
 const SCEN = {
   routine(){
-    const bk = nearestOf("bakery"), pk = nearestOf("park"), rx = nearestOf("pharmacy");
-    setPlan([{to: bk.node, dwell: 8}, {to: pk.node, dwell: 12}, {to: rx.node, dwell: 5}, {to: HOMEN, dwell: Infinity}]);
+    const tm = nearestOf("temple"), pk = nearestOf("park");
+    setPlan([{to: tm.node, dwell: 15}, {to: pk.node, dwell: 20}, {to: HOMEN, dwell: Infinity}]);
   },
   wander(){
     const R = settings.radius, h = P(HOMEN);
@@ -742,7 +741,7 @@ function renderChart(){
 }
 function renderDesc(){
   const ta = $("#desc"); if (document.activeElement === ta) return;
-  const name = who(), age = $("#pAge").value.trim(), wear = $("#pWear").value.trim(), notes = $("#pNotes").value.trim(), phone = $("#pPhone").value.trim();
+  const name = who(), age = $("#pAge").value.trim(), wear = $("#pWear").value.trim(), notes = $("#pNotes").value.trim();
   const moving = S.state === "walking" ? `Last seen walking ${headingWord()}.` : S.state === "fallen" ? "May have fallen and not be able to get up." : "Was not moving at last update.";
   const ll = toLL(S.pos);
   ta.value = [
@@ -751,7 +750,7 @@ function renderDesc(){
     `Map: https://www.google.com/maps/search/?api=1&query=${ll.lat.toFixed(6)},${ll.lon.toFixed(6)}`,
     wear && `Wearing: ${wear}.`,
     notes && `How to help: ${notes}`,
-    phone ? `Family contact: ${phone}` : `Family contact: (add a number above)`,
+    `Home: 11th Cross, 13th Main, Sahakarnagar`,
     `Emergency: 112`,
   ].filter(Boolean).join("\n");
 }
