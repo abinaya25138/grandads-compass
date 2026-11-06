@@ -2,17 +2,17 @@
 
 **Live demo: [grandads-compass.vercel.app](https://grandads-compass.vercel.app)**
 
-My grandad had Alzheimer's, and we lost him once. This is the family dashboard I built for him. It showed where he was around Sahakarnagar, Bengaluru, and alerted us when something looked wrong. His location came from an old phone sewn into his jacket.
+My grandad had Alzheimer's, and we lost him once. After that, our family tracked him through an old phone sewn into his jacket. This is the dashboard I designed to do the watching for us: it shows where he is around Sahakarnagar, Bengaluru, and raises an alert when something looks wrong.
 
-The version here runs a simulated walk on the real street map, so anyone can try every alert.
+He has since passed away, so the version here is a working prototype. It runs a simulated walk on the real street map, so anyone can try every alert.
 
 ![Grandad's Compass dashboard](docs/screenshot.png)
 
 ## What it does
 
 - **Live map on real streets.** Roads, parks, temples, shops, clinics and bus stops come from OpenStreetMap. Every route follows the actual road network.
-- **Safe zone.** A radius around home that you can adjust. The family got a warning as he neared the edge and an urgent alert when he crossed it. The alert named the street and the direction he was heading.
-- **Fall and inactivity alerts.** A possible fall (a hard jolt, then no movement) raised an urgent alert. So did staying still too long while away from home.
+- **Safe zone.** A radius around home that you can adjust. The family gets a warning as he nears the edge and an urgent alert when he crosses it, naming the street and the direction he is heading.
+- **Fall and inactivity alerts.** A possible fall (a hard jolt, then no movement) raises an urgent alert. So does staying still too long while away from home.
 - **Plain-language status.** For example "Walking along Sahakaranagar Road, 300 m north-east of home", with coordinates and the jacket phone's battery level.
 - **Day history.** A timeline of where he stopped and for how long, steps per hour, distance walked, time out of home, and how many times he left the safe zone.
 - **If he goes missing.** A ready-to-send description for police or neighbours. It includes his last location, a Google Maps link, what he's wearing, and how to approach him.
