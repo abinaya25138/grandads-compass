@@ -16,7 +16,7 @@ He has since passed away, so the version here is a working prototype. It runs a 
 - **Plain-language status.** For example "Walking along Sahakaranagar Road, 300 m north-east of home", with coordinates and the jacket phone's battery level.
 - **Day history.** A timeline of where he stopped and for how long, steps per hour, distance walked, time out of home, and how many times he left the safe zone.
 - **If he goes missing.** A ready-to-send description for police or neighbours. It includes his last location, a Google Maps link, what he's wearing, and how to approach him.
-- **Search helper (AI agent).** When he leaves the safe zone, "Plan a search" asks Claude to work out where to look first, split the search between family members, and write a message for neighbours and police in Tamil and English. It can also explain an alert in context ("he usually sits at the temple for 15 minutes") or answer questions about his day. The plan's places appear as numbered pins on the map.
+- **Search helper.** "Plan a search" instantly ranks the places to check first by real walking distance, his heading and where he went today, splits them between two people, pins them on the map, and fills in a message for neighbours and police in Tamil and English. If an AI key is set, an AI agent then adds its own written plan, can explain an alert in context ("he usually sits at the temple for 15 minutes"), and answers questions about his day.
 - **Works on phones.** Single-column layout on small screens. It can also be added to the home screen like an app.
 
 ## How it works
@@ -30,13 +30,16 @@ The whole app is one static `index.html` with no framework and no build step.
 
 ## The search helper
 
-The helper is a Claude agent with seven tools: `get_status`, `get_movement`, `get_today_log`, `find_places`, `walking_route`, `get_person_details` and `mark_places_on_map`. The tools run in the page, because the page already holds the map, the road routing and the day's record. Walking distances come from the same Dijkstra routing as the rest of the app, so the agent never guesses a distance.
+It has two layers.
 
-`api/helper.js` is a small Vercel function that sits between the page and the Claude API. It keeps the API key off the page and fixes the model, instructions and tool list, so the page can only send the conversation. It also limits message count, size and requests per visitor.
+1. **Map rules (always on, no key).** The page scores every named place by walking distance along real roads from his last position, with a bonus for places he went earlier today, places in the direction he was walking, and temples, parks and bus stops. It picks the top three, splits them between two people, and fills in the Tamil and English message from the "If he goes missing" details. A possible fall gets "go to him now" steps instead of a search.
+2. **AI agent (optional).** An agent with seven tools: `get_status`, `get_movement`, `get_today_log`, `find_places`, `walking_route`, `get_person_details` and `mark_places_on_map`. The tools run in the page on the same map, routing and day log, so the agent never guesses a distance.
+
+`api/helper.js` is a small Vercel function between the page and the AI provider. It keeps the API key off the page and fixes the model, instructions and tool list, so the page can only send the conversation. It also limits message count, size and requests per visitor. It uses **Gemini** (`gemini-3.8-flash`, which has a free tier) when `GEMINI_API_KEY` is set, otherwise **Claude** when `ANTHROPIC_API_KEY` is set. The page and the function use one small neutral format, so switching providers changes only that file.
 
 The agent only advises. The safe-zone, fall and inactivity alerts work exactly as before, and its instructions forbid telling the family to ignore an urgent alert or delay calling the police.
 
-To switch it on, add an `ANTHROPIC_API_KEY` environment variable to the Vercel project and redeploy. Without a key, the rest of the app works as before and the helper says it isn't switched on.
+To switch the agent on, add `GEMINI_API_KEY` (from Google AI Studio) to the Vercel project's environment variables and redeploy. Without a key, the map rules still work and the question box is hidden. Gemini's free tier may use requests to improve Google's products; this demo only sends the simulated walk.
 
 ## Run locally
 
@@ -45,14 +48,14 @@ python3 -m http.server 8000
 # open http://localhost:8000
 ```
 
-This serves the static app only. To try the search helper locally, run `vercel dev` with `ANTHROPIC_API_KEY` set.
+This serves the static app only. The map-rules search plan works there too. To try the AI agent locally, run `vercel dev` with `GEMINI_API_KEY` set.
 
 ## Project structure
 
 | Path | What it is |
 | --- | --- |
 | `index.html` | The app: markup, styles, script and embedded map data |
-| `api/helper.js` | Vercel function for the search helper: fixed instructions, tool list and model, with request limits |
+| `api/helper.js` | Vercel function for the AI search helper (Gemini or Claude): fixed instructions, tool list and model, with request limits |
 | `tools/build_map.py` | Turns OpenStreetMap exports into the embedded map JSON |
 | `manifest.webmanifest`, `icon*.png`, `icon.svg` | Home-screen install support |
 | `docs/screenshot.png` | README screenshot |

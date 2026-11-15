@@ -161,6 +161,9 @@ select,input[type=text],input[type=tel],textarea{background:var(--bg);border:1px
 .helper-answer ol,.helper-answer ul{margin:0 0 8px;padding-left:20px}
 .helper-answer li{margin-bottom:4px}
 .helper-err{color:var(--warn)}
+.helper-answer .urgent{color:var(--crit);font-weight:600}
+.msg{white-space:pre-wrap;font:13px/1.5 var(--f-body);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:8px 10px;margin:0 0 8px}
+.ai-h{font-size:14.5px;margin:0 0 4px;color:var(--accent)}
 .helper-hint{font-size:12.5px;color:var(--muted);margin:10px 0 0}
 #helperCard.busy [data-ask],#helperCard.busy .ask button{opacity:.5;pointer-events:none}
 .banner-acts{display:flex;gap:6px}
@@ -270,10 +273,12 @@ select,input[type=text],input[type=tel],textarea{background:var(--bg);border:1px
       </section>
 
       <section class="card" id="helperCard">
-        <div class="card-head"><h3>Search helper</h3><span class="label">AI agent, reads the live map</span></div>
+        <div class="card-head"><h3>Search helper</h3><span class="label" id="aiLabel">Map rules</span></div>
         <div class="helper-acts"><button class="btn primary" type="button" data-ask="plan">Plan a search</button><button class="btn" type="button" data-ask="explain">Explain the latest alert</button></div>
-        <form id="askForm" class="ask"><input type="text" id="askInput" maxlength="300" placeholder="Ask about his day, e.g. how long was he at the temple?" aria-label="Ask the search helper"><button class="btn" type="submit">Ask</button></form>
-        <div id="helperOut" class="helper-out" hidden>
+        <form id="askForm" class="ask" hidden><input type="text" id="askInput" maxlength="300" placeholder="Ask about his day, e.g. how long was he at the temple?" aria-label="Ask the search helper"><button class="btn" type="submit">Ask</button></form>
+        <div id="quickOut" class="helper-out helper-answer" hidden></div>
+        <div id="aiOut" class="helper-out" hidden>
+          <h4 class="ai-h">From the AI helper</h4>
           <p class="helper-q" id="helperQ"></p>
           <ul class="helper-steps" id="helperSteps" aria-live="polite"></ul>
           <div class="helper-answer" id="helperAnswer" aria-live="polite"></div>
@@ -763,10 +768,16 @@ function renderDesc(){
   ].filter(Boolean).join("\n");
 }
 
-/* ---------- search helper (Claude agent; the tools run here, api/helper.js talks to Claude) ---------- */
+/* ---------- search helper ---------- */
+// Two layers: a rule-based plan built here from the map (always works, no key), and an
+// optional AI agent (api/helper.js) whose tools also run here, on the same data.
 const WALK_MPM = 75; // a family member walking briskly, metres per minute
+const KIND_WORD = {temple: "a temple", park: "a park", bus: "a bus stop", bakery: "a bakery", cafe: "a cafe", shop: "a shop", pharmacy: "a pharmacy", hospital: "a hospital", post: "the post office"};
+const PULL = {temple: 250, park: 200, bus: 200, bakery: 100, cafe: 60}; // metres: places people with dementia often head for
 const lmByName = name => LMS.find(l => l.name.toLowerCase() === String(name).trim().toLowerCase());
 const fromNode = from => from === "home" ? HOMEN : nearestNode(S.pos.x, S.pos.y);
+const mapLink = p => { const ll = toLL(p); return `https://www.google.com/maps/search/?api=1&query=${ll.lat.toFixed(6)},${ll.lon.toFixed(6)}`; };
+const LEVEL = {crit: "urgent", warn: "check", info: "update"};
 function visitsToday(){
   const v = new Map();
   S.events.forEach((e, i) => {
@@ -784,17 +795,88 @@ function streetsAlong(nodes){
   }
   return out;
 }
+const cap = t => t[0].toUpperCase() + t.slice(1);
+const stillMins = () => S.state === "walking" ? 0 : Math.round((S.t - S.lastMoveT) / 60);
+
+/* rule-based layer */
+function choosePlaces(){
+  const base = S.pos, {dist} = dijkstra(nearestNode(base.x, base.y)), visits = visitsToday();
+  const heading = S.state === "walking" ? S.heading : null;
+  return LMS.map(l => {
+    const walk = dist[l.node], why = [];
+    let score = walk - (PULL[l.k] || 0);
+    if (visits.has(l.name)){ score -= 300; why.push("he went there earlier today"); }
+    if (heading !== null){
+      const ang = Math.atan2(l.x - base.x, -(l.y - base.y)) * 180 / Math.PI;
+      if (Math.abs(((ang - heading + 540) % 360) - 180) < 50){ score -= 250; why.push("it's the way he was walking"); }
+    }
+    return {l, score, walk: Math.round(walk), why};
+  }).filter(p => isFinite(p.walk) && p.walk <= 1500 && hyp(p.l, base) > 25).sort((a, b) => a.score - b.score).slice(0, 3);
+}
+function messages(){
+  const name = who(), age = $("#pAge").value.trim(), wear = $("#pWear").value.trim(), spot = spotText(S.pos), area = areaName(S.pos), link = mapLink(S.pos);
+  const ta = [`${name}${age ? `, ${age} வயது,` : ""} காணவில்லை. அவருக்கு அல்சைமர் நோய் உள்ளது; வழி தெரியாமல் தவிக்கலாம்.`,
+    `கடைசியாகப் பார்த்த இடம் (${fmt(S.t)}): ${spot}, ${area}, பெங்களூரு.`, `வரைபடம்: ${link}`,
+    wear && `அணிந்திருப்பது: ${wear}.`,
+    "அவரைப் பார்த்தால், அமைதியாகத் தமிழில் பேசி, குடும்பத்தினர் வரும் வரை அவருடன் இருங்கள். உடனே அழைக்கவும்: 112."];
+  const en = [`${name}${age ? `, aged ${age},` : ""} is missing. He has Alzheimer's and may be confused.`,
+    `Last seen at ${fmt(S.t)}: ${spot}, ${area}, Bengaluru.`, `Map: ${link}`,
+    wear && `Wearing: ${wear}.`,
+    "If you see him, talk to him calmly in Tamil and stay with him until family arrives. Call 112."];
+  return ta.filter(Boolean).join("\n") + "\n\n" + en.filter(Boolean).join("\n");
+}
+function quickPlan(){
+  const d = hyp(S.pos, P(HOMEN)), still = stillMins(), picks = choosePlaces(), homeDist = dijkstra(HOMEN).dist;
+  const mins = node => Math.max(1, Math.round(homeDist[node] / WALK_MPM));
+  const now = `${fmt(S.t)}: ${$("#stTitle").textContent}, ${fromHome(S.pos)}. ` +
+    (S.inside ? `Inside the safe zone, ${Math.round(settings.radius - d)} m from the edge. ` : `Outside the safe zone by ${Math.round(d - settings.radius)} m. `) +
+    (S.state === "walking" ? `Walking ${headingWord()}.` : still ? `Not moved for ${still} min.` : "");
+  let h = `<h4>Right now</h4><p>${esc(now)}</p>`;
+  const me = nearestNode(S.pos.x, S.pos.y);
+  if (S.state === "fallen"){
+    showPins([]);
+    return h + `<p class="urgent">Possible fall. He isn't lost: his phone shows where he is. Go to him now.</p><ol>` +
+      `<li>Call his phone.</li><li>Send the nearest person to him: ${esc(spotText(S.pos))}, about ${mins(me)} min walk from home. <a href="${mapLink(S.pos)}" target="_blank" rel="noopener">Open in Google Maps</a></li>` +
+      `<li>If he doesn't answer within a few minutes, call 112 and give them the map link.</li><li>When you reach him, don't try to lift him if he's in pain. Stay with him and call 112.</li></ol>`;
+  }
+  if (S.inside) h += `<p>He's inside the safe zone. If you can't reach him by phone, start here.</p>`;
+  h += `<h4>Where to look first</h4><ol><li><b>His last position</b>, ${esc(spotText(S.pos))}. <a href="${mapLink(S.pos)}" target="_blank" rel="noopener">Open in Google Maps</a></li>` +
+    picks.map(p => `<li><b>${esc(p.l.name)}</b>, ${KIND_WORD[p.l.k] || "a landmark"}, ${p.walk} m from his last position${p.why.length ? ". " + esc(cap(p.why.join(", and "))) : ""}.</li>`).join("") + `</ol>`;
+  if (picks.length) h += `<h4>Who goes where</h4><p><b>Person 1:</b> straight to his last position (${mins(me)} min walk from home), then ${esc(picks[0].l.name)}.</p>` +
+    (picks.length > 1 ? `<p><b>Person 2:</b> ${esc(picks[1].l.name)} (${mins(picks[1].l.node)} min from home)${picks[2] ? `, then ${esc(picks[2].l.name)}` : ""}.</p>` : "");
+  h += `<h4>Message to send</h4><pre class="msg" id="quickMsg">${esc(messages())}</pre><button class="btn small" type="button" data-copy="quickMsg">Copy message</button>`;
+  showPins(picks.map(p => p.l));
+  return h;
+}
+function quickExplain(){
+  const open = S.alerts.filter(x => !x.ack && x.sev !== "info"), a = open.find(x => x.kind === "fall") || open.pop();
+  if (!a) return `<p>No open alerts right now. ${esc(who())} is ${esc(fromHome(S.pos))}, ${esc(spotText(S.pos))}.</p>`;
+  const still = stillMins(), where = `${spotText(S.pos)}, ${fromHome(S.pos)}`;
+  let t = "";
+  if (a.kind === "fall" || S.state === "fallen") t = `<p class="urgent">His phone felt a hard jolt at ${fmt(a.t)}, then no movement. Call his phone now and send the nearest person to him (${esc(where)}). If he doesn't answer within a few minutes, call 112.</p>`;
+  else if (a.kind === "zone") t = `<p>He left the safe zone at ${fmt(a.t)}. He's now ${esc(where)}${still ? `, and hasn't moved for ${still} min` : ""}.</p><p><b>Next step:</b> call his phone, and press <b>Plan a search</b> if he doesn't answer.</p>`;
+  else if (a.kind === "near") t = `<p>He's close to the edge of the safe zone, ${esc(where)}. If he crosses it you'll get an urgent alert.</p><p><b>Next step:</b> keep an eye on the map, or call him to check where he's going.</p>`;
+  else {
+    const earlier = S.place && S.place !== "home" ? (visitsToday().get(S.place) || []).filter(v => !v.stillThere) : [];
+    t = `<p>He hasn't moved for ${still} min. He's ${esc(where)}.</p>` +
+      (earlier.length ? `<p>Earlier today he stayed at ${esc(S.place)} for ${earlier.map(v => v.minutes + " min").join(" and ")}.</p>` : "") +
+      `<p><b>Next step:</b> call his phone to check on him.</p>`;
+  }
+  return `<p class="helper-q">${LEVEL[a.sev] === "urgent" ? "Urgent" : "Check"} alert at ${fmt(a.t)}: ${esc(a.title)}</p>` + t;
+}
+
+/* AI layer: the agent's tools */
 const TOOLS = {
   get_status(){
-    const d = hyp(S.pos, P(HOMEN)), still = Math.round((S.t - S.lastMoveT) / 60);
+    const d = hyp(S.pos, P(HOMEN));
     return {
       time: fmt(S.t), doing: $("#stTitle").textContent, where: spotText(S.pos), area: areaName(S.pos),
       from_home: fromHome(S.pos), inside_safe_zone: S.inside, safe_zone_radius_m: settings.radius,
       metres_to_edge_or_outside_by: Math.round(Math.abs(settings.radius - d)),
       moving: S.state === "walking", heading: S.state === "walking" ? headingWord() : null,
-      minutes_since_last_moved: S.state === "walking" ? 0 : still, possible_fall: S.state === "fallen",
+      minutes_since_last_moved: stillMins(), possible_fall: S.state === "fallen",
       phone_battery_percent: Math.round(S.battery), coordinates: llText(S.pos),
-      open_alerts: S.alerts.filter(a => !a.ack).map(a => ({time: fmt(a.t), level: {crit: "urgent", warn: "check", info: "update"}[a.sev], title: a.title, detail: a.detail})),
+      open_alerts: S.alerts.filter(a => !a.ack).map(a => ({time: fmt(a.t), level: LEVEL[a.sev], title: a.title, detail: a.detail})),
     };
   },
   get_movement({minutes = 60} = {}){
@@ -813,13 +895,13 @@ const TOOLS = {
     const steps = Math.round(S.steps.reduce((a,b) => a+b, 0));
     return {
       now: fmt(S.t), events: S.events.map(e => ({time: fmt(e.t), what: e.text})),
-      alerts: S.alerts.map(a => ({time: fmt(a.t), level: {crit: "urgent", warn: "check", info: "update"}[a.sev], title: a.title, detail: a.detail, status: a.ack ? (a.ack === "auto" ? "cleared when he came back" : "handled") : "open"})),
+      alerts: S.alerts.map(a => ({time: fmt(a.t), level: LEVEL[a.sev], title: a.title, detail: a.detail, status: a.ack ? (a.ack === "auto" ? "cleared when he came back" : "handled") : "open"})),
       steps, km_walked: +(steps*0.72/1000).toFixed(1), minutes_out_of_home: Math.round(S.timeOut/60), times_left_safe_zone: S.leftCount,
     };
   },
   find_places({from = "him", kinds, limit = 8} = {}){
     const {dist} = dijkstra(fromNode(from)), base = from === "home" ? P(HOMEN) : S.pos, visits = visitsToday(), h = P(HOMEN);
-    return LMS.filter(l => !kinds || !kinds.length || kinds.includes(l.k))
+    return LMS.filter(l => !Array.isArray(kinds) || !kinds.length || kinds.includes(l.k))
       .map(l => ({name: l.name, kind: l.k, walk_m: Math.round(dist[l.node]), direction: compass(l.x-base.x, l.y-base.y), inside_safe_zone: hyp(l, h) <= settings.radius, visited_today: visits.get(l.name) || []}))
       .filter(p => isFinite(p.walk_m)).sort((a,b) => a.walk_m - b.walk_m).slice(0, Math.min(19, Math.max(1, limit|0 || 8)));
   },
@@ -830,13 +912,12 @@ const TOOLS = {
     return {from: from === "home" ? "home" : spotText(S.pos), to: l.name, walk_m: Math.round(m), minutes: Math.max(1, Math.round(m / WALK_MPM)), streets_in_order: streetsAlong(nodes)};
   },
   get_person_details(){
-    const ll = toLL(S.pos);
-    return {name: who(), age: $("#pAge").value.trim(), wearing: $("#pWear").value.trim(), how_to_approach: $("#pNotes").value.trim(), home: "11th Cross, 13th Main, Sahakarnagar, Bengaluru", last_position_map_link: `https://www.google.com/maps/search/?api=1&query=${ll.lat.toFixed(6)},${ll.lon.toFixed(6)}`, emergency_number: "112"};
+    return {name: who(), age: $("#pAge").value.trim(), wearing: $("#pWear").value.trim(), how_to_approach: $("#pNotes").value.trim(), home: "11th Cross, 13th Main, Sahakarnagar, Bengaluru", last_position_map_link: mapLink(S.pos), emergency_number: "112"};
   },
   mark_places_on_map({places = []} = {}){
-    const found = places.map(lmByName), missing = places.filter((n, i) => !found[i]);
+    const list = (Array.isArray(places) ? places : []).slice(0, 6), found = list.map(lmByName);
     showPins(found.filter(Boolean));
-    return {marked: found.filter(Boolean).map((l, i) => `${i+1}. ${l.name}`), not_found: missing};
+    return {marked: found.filter(Boolean).map((l, i) => `${i+1}. ${l.name}`), not_found: list.filter((n, i) => !found[i])};
   },
 };
 const TOOL_STEP = {get_status: "Checking where he is now", get_movement: "Reading his recent path", get_today_log: "Reading today's record", find_places: "Looking at places nearby", walking_route: "Working out walking routes", get_person_details: "Reading his details", mark_places_on_map: "Marking places on the map"};
@@ -873,58 +954,69 @@ function md(text){
   close(); return html;
 }
 
-let convo = [], busy = false;
+/* AI layer: the loop. The function returns the provider's turn as `raw`, which goes back unchanged. */
+let aiOn = null, history = [], busy = false;
+const AI_NAME = {gemini: "Gemini", claude: "Claude"};
 const HELPER_ERR = {
-  not_configured: "The search helper isn't switched on for this copy of the app yet.",
+  not_configured: "The AI helper isn't switched on right now. The quick plan above still works.",
   rate_limited: "Too many questions in a short time. Wait a few minutes and try again.",
 };
-async function askHelper(text, fresh){
-  if (busy || !text.trim()) return;
+fetch("api/helper").then(r => r.ok ? r.json() : {}).catch(() => ({})).then(d => {
+  aiOn = d.ai || null;
+  $("#aiLabel").textContent = aiOn ? `AI agent (${AI_NAME[aiOn] || aiOn}) + map rules` : "Map rules";
+  $("#askForm").hidden = !aiOn;
+});
+async function askAI(text, fresh){
+  if (!aiOn || busy || !text.trim()) return;
   busy = true; $("#helperCard").classList.add("busy");
-  if (fresh){ convo = []; showPins([]); }
-  convo.push({role: "user", content: text.trim()});
-  const out = $("#helperOut"), steps = $("#helperSteps");
-  out.hidden = false; $("#helperAnswer").innerHTML = ""; steps.innerHTML = ""; $("#helperQ").textContent = text.trim(); $("#helperCopy").hidden = true;
+  if (fresh) history = [];
+  history.push({role: "user", text: text.trim().slice(0, 600)});
+  const box = $("#aiOut"), steps = $("#helperSteps");
+  box.hidden = false; $("#helperAnswer").innerHTML = ""; steps.innerHTML = ""; $("#helperQ").textContent = text.trim(); $("#helperCopy").hidden = true;
   const step = msg => { const li = document.createElement("li"); li.textContent = msg; steps.appendChild(li); };
   step("Thinking");
   try {
     for (let round = 0; round < 12; round++){
-      const r = await fetch("api/helper", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({messages: convo})});
+      const r = await fetch("api/helper", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({history})});
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(HELPER_ERR[data.error] || (r.status === 404 || r.status === 405 ? HELPER_ERR.not_configured : "The search helper couldn't answer just now. Try again in a moment."));
-      convo.push({role: "assistant", content: data.content});
-      if (data.stop_reason === "tool_use"){
-        const results = data.content.filter(b => b.type === "tool_use").map(b => {
-          step(TOOL_STEP[b.name] || "Working");
-          try { if (!TOOLS[b.name]) throw new Error("Unknown tool " + b.name); return {type: "tool_result", tool_use_id: b.id, content: JSON.stringify(TOOLS[b.name](b.input || {}))}; }
-          catch (e){ return {type: "tool_result", tool_use_id: b.id, content: e.message, is_error: true}; }
-        });
-        convo.push({role: "user", content: results});
+      if (!r.ok) throw new Error(HELPER_ERR[data.error] || "The AI helper couldn't answer just now. Try again in a moment.");
+      history.push({role: "assistant", raw: data.raw});
+      if (data.stop === "tool_use"){
+        history.push({role: "tool_results", results: data.tool_calls.map(c => {
+          step(TOOL_STEP[c.name] || "Working");
+          try { if (!TOOLS[c.name]) throw new Error("Unknown tool " + c.name); return {id: c.id, name: c.name, content: JSON.stringify(TOOLS[c.name](c.input || {}))}; }
+          catch (e){ return {id: c.id, name: c.name, content: e.message, is_error: true}; }
+        })});
         continue;
       }
-      if (data.stop_reason === "refusal") throw new Error("The search helper can't help with that one. For anything urgent, call 112.");
-      const answer = data.content.filter(b => b.type === "text").map(b => b.text).join("\n\n").trim();
-      $("#helperAnswer").innerHTML = md(answer || "No answer came back. Try asking again.") + (data.stop_reason === "max_tokens" ? `<p class="note">The answer was cut short.</p>` : "");
+      if (data.stop === "refusal") throw new Error("The AI helper can't help with that one. For anything urgent, call 112.");
+      const answer = (data.text || "").trim();
+      $("#helperAnswer").innerHTML = md(answer || "No answer came back. Try asking again.") + (data.stop === "max_tokens" ? `<p class="note">The answer was cut short.</p>` : "");
       $("#helperCopy").hidden = !answer; $("#helperCopy").dataset.text = answer;
       break;
     }
   } catch (e){
     $("#helperAnswer").innerHTML = `<p class="helper-err">${esc(e.message)}</p>`;
-    convo = [];
+    history = [];
   } finally {
     steps.innerHTML = ""; busy = false; $("#helperCard").classList.remove("busy");
   }
 }
+
 const ASK = {
-  plan: () => `${who()} may be lost. Plan a search for us right now.`,
-  explain: () => "Explain the latest alert and tell us what to do next.",
+  plan: {quick: quickPlan, ai: () => `${who()} may be lost. Plan a search for us right now.`},
+  explain: {quick: quickExplain, ai: () => "Explain the latest alert and tell us what to do next."},
 };
 document.addEventListener("click", e => {
-  const b = e.target.closest("[data-ask]"); if (!b) return;
-  askHelper(ASK[b.dataset.ask](), true);
+  const c = e.target.closest("[data-copy]");
+  if (c){ try { navigator.clipboard.writeText($("#" + c.dataset.copy).textContent); c.textContent = "Copied"; setTimeout(() => c.textContent = "Copy message", 1500); } catch(_){} return; }
+  const b = e.target.closest("[data-ask]"); if (!b || busy) return;
+  const job = ASK[b.dataset.ask];
+  $("#quickOut").innerHTML = job.quick(); $("#quickOut").hidden = false; $("#aiOut").hidden = true;
+  if (aiOn) askAI(job.ai(), true);
   if (b.closest(".alerts, .banner")) $("#helperCard").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start"});
 });
-$("#askForm").addEventListener("submit", e => { e.preventDefault(); const v = $("#askInput").value; $("#askInput").value = ""; askHelper(v, !convo.length); });
+$("#askForm").addEventListener("submit", e => { e.preventDefault(); const v = $("#askInput").value; $("#askInput").value = ""; askAI(v, !history.length); });
 $("#helperCopy").addEventListener("click", e => { try { navigator.clipboard.writeText(e.currentTarget.dataset.text); e.currentTarget.textContent = "Copied"; setTimeout(() => $("#helperCopy").textContent = "Copy answer", 1500); } catch(_){} });
 
 /* ---------- sound ---------- */
@@ -945,7 +1037,7 @@ document.querySelectorAll("[data-speed]").forEach(b => b.addEventListener("click
 }));
 function resetDay(){
   S = freshState(); lastAlertVer = lastEvVer = 0; placeHome();
-  if (!busy){ convo = []; showPins([]); $("#helperOut").hidden = true; }
+  if (!busy){ history = []; showPins([]); $("#quickOut").hidden = $("#aiOut").hidden = true; }
   vb.cx = S.pos.x; vb.cy = S.pos.y; vb.w = svg.clientWidth && svg.clientWidth < 520 ? 850 : 1300; applyVB();
   SCEN.routine(); render();
 }
