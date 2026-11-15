@@ -976,9 +976,15 @@ async function askAI(text, fresh){
   const step = msg => { const li = document.createElement("li"); li.textContent = msg; steps.appendChild(li); };
   step("Thinking");
   try {
-    for (let round = 0; round < 12; round++){
+    for (let round = 0, waits = 0; round < 12; round++){
       const r = await fetch("api/helper", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({history})});
       const data = await r.json().catch(() => ({}));
+      // the free AI tier allows a few requests a minute; wait it out when the wait is short
+      if (r.status === 429 && data.retry_after && data.retry_after <= 60 && waits++ < 2){
+        step(`Waiting ${data.retry_after} s for the free AI quota`);
+        await new Promise(ok => setTimeout(ok, (data.retry_after + 1) * 1000));
+        round--; continue;
+      }
       if (!r.ok) throw new Error(HELPER_ERR[data.error] || "The AI helper couldn't answer just now. Try again in a moment.");
       history.push({role: "assistant", raw: data.raw});
       if (data.stop === "tool_use"){

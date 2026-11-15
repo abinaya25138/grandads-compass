@@ -12,7 +12,7 @@ import Anthropic from "@anthropic-ai/sdk";
 const SYSTEM = `You are the search helper inside Grandad's Compass, a family dashboard for an 84-year-old man with Alzheimer's who lives in Sahakarnagar, Bengaluru. His phone is sewn into his jacket and reports his position. The family uses you when he may be lost, may have fallen, or when they have a question about his day. This copy is a prototype running a simulated walk on the real street map. The dashboard has already shown the family a quick rule-based plan; your job is to add judgement and clear writing on top of it.
 
 How to work:
-- Start every task with get_status. Base every statement on tool results: never invent places, streets, distances, times or habits. If the tools don't tell you something, say you don't know.
+- Start every task with get_status. Make independent tool calls together in one step (for example get_status, get_movement, get_today_log, find_places and get_person_details at once) so the plan needs as few steps as possible. Base every statement on tool results: never invent places, streets, distances, times or habits. If the tools don't tell you something, say you don't know.
 - Distances to places must come from find_places or walking_route (they follow real roads). Directions like "north-east" come from the tools too.
 - He speaks Tamil. Messages for people who might find him should be in simple Tamil and English, and use the details from get_person_details.
 
@@ -25,9 +25,9 @@ Writing style: plain, calm, short sentences a worried person can read on a phone
 
 When asked to plan a search:
 1. One line on where he is, how long he has been there or how he is moving, and the time.
-2. "Where to look first": 3 or 4 places in order, each with why (his heading, places he visited today, places he is drawn to such as temples, parks and bus stops) and the walking distance from his last position. Call mark_places_on_map with the same places in the same order.
-3. "Who goes where": if the family hasn't said who is available, assume two people at home and give each a starting place and the walking route summary.
-4. "Message to send": a short message in Tamil and in English for neighbours, shopkeepers and the police, with what he is wearing, his last position and the Google Maps link.
+2. "Where to look first": 3 or 4 places in order, each with the walking distance from his last position and a short reason. Only say he went somewhere, likes somewhere or was heading somewhere if a tool result shows it (visited_today, the today log, or his movement). Otherwise give an honest reason, such as "the closest bus stop" or "a temple, the kind of place people often stop at". Call mark_places_on_map with the same places in the same order.
+3. "Who goes where": if the family hasn't said who is available, assume two people at home. Person 1 always goes straight to his last position first. Give each person their places in order and the walking route summary from home.
+4. "Message to send": a short message in Tamil and in English for neighbours, shopkeepers and the police. Each version must include his name and age, what he is wearing, his last position, the Google Maps link, and end with "Call 112".
 
 When asked to explain an alert: say in two or three sentences what the alert means, add the context from the tools (where he is, whether this matches what he did earlier today, how long he usually stays), and end with one clear next step. Context can calm a "check" alert, but an "urgent" alert always gets an action.`;
 
@@ -89,7 +89,8 @@ const TOOLS = [
 ];
 
 /* ---------- Gemini (Interactions API, stateless) ---------- */
-const GEMINI_MODEL = "gemini-3.8-flash";
+// Flash-Lite: its free tier allows more requests per minute than Flash (Flash allows 5, and one plan takes 3 to 5)
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 const GEMINI_TOOLS = TOOLS.map(t => ({ type: "function", name: t.name, description: t.description, parameters: t.parameters }));
 
 function toGeminiSteps(history){
@@ -114,7 +115,10 @@ async function askGemini(history){
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok){
-    const err = new Error(data.error?.message || `Gemini ${r.status}`); err.status = r.status; throw err;
+    const err = new Error(data.error?.message || `Gemini ${r.status}`); err.status = r.status;
+    const wait = String(data.error?.message || "").match(/retry in (\d+(?:\.\d+)?)s/i);
+    if (wait) err.retryAfter = Math.ceil(+wait[1]);
+    throw err;
   }
   const steps = data.steps || [];
   const tool_calls = steps.filter(s => s.type === "function_call").map(s => ({ id: s.id, name: s.name, input: s.arguments || {} }));
@@ -193,7 +197,7 @@ export default async function handler(req, res){
   } catch (error){
     console.error("helper:", which, error?.status ?? "", error?.message ?? error);
     if (error instanceof Anthropic.AuthenticationError || error?.status === 401 || error?.status === 403) return res.status(503).json({ error: "not_configured" });
-    if (error instanceof Anthropic.RateLimitError || error?.status === 429) return res.status(429).json({ error: "rate_limited" });
+    if (error instanceof Anthropic.RateLimitError || error?.status === 429) return res.status(429).json({ error: "rate_limited", retry_after: error.retryAfter ?? null });
     if (error instanceof Anthropic.BadRequestError || error?.status === 400) return res.status(400).json({ error: "bad_request" });
     return res.status(502).json({ error: "upstream_error" });
   }
