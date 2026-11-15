@@ -148,6 +148,23 @@ select,input[type=text],input[type=tel],textarea{background:var(--bg);border:1px
 .sos{font-size:14px;color:var(--muted)}
 .sos b{color:var(--crit);font-family:var(--f-mono);font-size:16px}
 
+#helperCard .helper-acts{display:flex;gap:6px;flex-wrap:wrap}
+.ask{display:flex;gap:6px;margin-top:10px}
+.ask input{flex:1;min-width:0}
+.helper-out{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+.helper-q{margin:0 0 6px;font-size:13px;color:var(--muted)}
+.helper-steps{list-style:none;margin:0;padding:0;font-size:13.5px;color:var(--muted)}
+.helper-steps li::before{content:"\2026 ";color:var(--accent)}
+.helper-answer{font-size:14.5px}
+.helper-answer h4{font-size:14.5px;margin:12px 0 4px}
+.helper-answer p{margin:0 0 8px}
+.helper-answer ol,.helper-answer ul{margin:0 0 8px;padding-left:20px}
+.helper-answer li{margin-bottom:4px}
+.helper-err{color:var(--warn)}
+.helper-hint{font-size:12.5px;color:var(--muted);margin:10px 0 0}
+#helperCard.busy [data-ask],#helperCard.busy .ask button{opacity:.5;pointer-events:none}
+.banner-acts{display:flex;gap:6px}
+
 @media (max-width:980px){.main{grid-template-columns:minmax(0,1fr)}.lower{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:600px){
   .app{gap:12px;padding-block:0 28px}
@@ -200,6 +217,7 @@ select,input[type=text],input[type=tel],textarea{background:var(--bg);border:1px
           <circle id="zone" r="500" fill="var(--zone)" fill-opacity=".07" stroke="var(--zone)" stroke-width="2.5" stroke-dasharray="10 7" vector-effect="non-scaling-stroke"/>
           <polyline id="trail" fill="none" stroke="var(--accent)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".6" vector-effect="non-scaling-stroke" points=""/>
           <g id="marks"></g>
+          <g id="pins"></g>
           <g id="who" class="mk">
             <g class="sc">
               <circle r="24" fill="var(--accent)" fill-opacity=".14"/>
@@ -209,7 +227,7 @@ select,input[type=text],input[type=tel],textarea{background:var(--bg);border:1px
             </g>
           </g>
         </svg>
-        <div class="banner" id="banner" hidden><span id="bannerText"></span><button type="button" id="bannerBtn">Open search details</button></div>
+        <div class="banner" id="banner" hidden><span id="bannerText"></span><span class="banner-acts"><button type="button" data-ask="plan">Plan a search</button><button type="button" id="bannerBtn">Search details</button></span></div>
         <div class="pickhint" id="pickhint" hidden>Tap the street where Grandad lives. Press Esc to cancel.</div>
         <div class="zoom">
           <button type="button" id="zin" aria-label="Zoom in">+</button>
@@ -249,6 +267,19 @@ select,input[type=text],input[type=tel],textarea{background:var(--bg);border:1px
       <section class="card">
         <div class="card-head"><h3>Alerts</h3><span id="alertCount"></span></div>
         <ul class="alerts" id="alerts"></ul>
+      </section>
+
+      <section class="card" id="helperCard">
+        <div class="card-head"><h3>Search helper</h3><span class="label">AI agent, reads the live map</span></div>
+        <div class="helper-acts"><button class="btn primary" type="button" data-ask="plan">Plan a search</button><button class="btn" type="button" data-ask="explain">Explain the latest alert</button></div>
+        <form id="askForm" class="ask"><input type="text" id="askInput" maxlength="300" placeholder="Ask about his day, e.g. how long was he at the temple?" aria-label="Ask the search helper"><button class="btn" type="submit">Ask</button></form>
+        <div id="helperOut" class="helper-out" hidden>
+          <p class="helper-q" id="helperQ"></p>
+          <ul class="helper-steps" id="helperSteps" aria-live="polite"></ul>
+          <div class="helper-answer" id="helperAnswer" aria-live="polite"></div>
+          <button class="btn small" type="button" id="helperCopy" hidden>Copy answer</button>
+        </div>
+        <p class="hint helper-hint">Suggestions only. The alerts above always stay on, and in an emergency call 112.</p>
       </section>
 
       <section class="card">
@@ -325,7 +356,7 @@ D.ways.forEach(([name,, p], wi) => {
   }
 });
 function nearestNode(x, y){ let b = 0, bd = Infinity; for (let i = 0; i < NN; i++){ const d = (NX(i)-x)**2 + (NY(i)-y)**2; if (d < bd){ bd = d; b = i; } } return b; }
-function path(a, b){
+function dijkstra(a, b = -1){
   const dist = new Float64Array(NN).fill(Infinity), prev = new Int32Array(NN).fill(-1), h = [[0,a]];
   dist[a] = 0;
   const push = it => { h.push(it); let i = h.length-1; while (i > 0){ const p = (i-1) >> 1; if (h[p][0] <= h[i][0]) break; [h[p],h[i]] = [h[i],h[p]]; i = p; } };
@@ -336,7 +367,10 @@ function path(a, b){
     if (d > dist[u]) continue;
     for (const [v,l] of ADJ[u]){ const nd = d + l; if (nd < dist[v]){ dist[v] = nd; prev[v] = u; push([nd,v]); } }
   }
-  const out = [b];
+  return {dist, prev};
+}
+function path(a, b){
+  const {prev} = dijkstra(a, b), out = [b];
   while (out[0] !== a){ const p = prev[out[0]]; if (p < 0) return [a]; out.unshift(p); }
   return out;
 }
@@ -504,7 +538,7 @@ function freshState(){
   return {
     t: 9.5*3600, pos: P(HOMEN), node: HOMEN, route: [], plan: [], leg: null, dwellUntil: null,
     place: "home", arrivedT: 9.5*3600 - 3000, state: "home", lastMoveT: 9.5*3600, heading: 0,
-    battery: 82, steps, timeOut: 0, leftCount: 0, trail: [], inside: true, nearWarned: false,
+    battery: 82, steps, timeOut: 0, leftCount: 0, trail: [], track: [], inside: true, nearWarned: false,
     inactiveAlerted: false, fallIn: null,
     alerts: [], events: [], alertVer: 1, evVer: 1, nextId: 1
   };
@@ -603,6 +637,7 @@ function tick(){
   }
   if (S.place !== "home") S.timeOut += dt;
   S.battery = Math.max(5, S.battery - dt/900);
+  if (!S.track.length || S.t - S.track[S.track.length-1].t >= 60){ S.track.push({t: S.t, x: S.pos.x, y: S.pos.y, moving: moved > 0}); if (S.track.length > 1500) S.track.shift(); }
 
   const d = hyp(S.pos, P(HOMEN)), R = settings.radius, inside = d <= R;
   if (S.inside && !inside){
@@ -682,7 +717,8 @@ function renderAlerts(){
       ${a.ack ? `<p>${a.ack === "auto" ? "Cleared when he came back" : "Handled by you"}</p>` : `<div class="a-act">
         <button class="btn small" type="button" data-ack="${a.id}">${a.sev === "info" ? "Dismiss" : "I'm on it"}</button>
         ${a.kind === "fall" ? `<button class="btn small" type="button" data-safe="${a.id}">He's OK</button>` : ""}
-        ${a.kind === "zone" || a.kind === "fall" ? `<button class="btn small" type="button" data-find>Search details</button>` : ""}
+        ${a.kind === "zone" || a.kind === "fall" ? `<button class="btn small" type="button" data-ask="plan">Plan a search</button><button class="btn small" type="button" data-find>Search details</button>` : ""}
+        ${a.kind === "inact" || a.kind === "near" ? `<button class="btn small" type="button" data-ask="explain">Explain this</button>` : ""}
       </div>`}
     </li>`).join("");
 }
@@ -727,6 +763,170 @@ function renderDesc(){
   ].filter(Boolean).join("\n");
 }
 
+/* ---------- search helper (Claude agent; the tools run here, api/helper.js talks to Claude) ---------- */
+const WALK_MPM = 75; // a family member walking briskly, metres per minute
+const lmByName = name => LMS.find(l => l.name.toLowerCase() === String(name).trim().toLowerCase());
+const fromNode = from => from === "home" ? HOMEN : nearestNode(S.pos.x, S.pos.y);
+function visitsToday(){
+  const v = new Map();
+  S.events.forEach((e, i) => {
+    const m = e.text.match(/^Arrived at (.+)$/); if (!m) return;
+    const left = S.events.slice(i+1).find(x => x.text.startsWith("Left " + m[1]));
+    v.set(m[1], [...(v.get(m[1]) || []), {arrived: fmt(e.t), minutes: Math.round(((left ? left.t : S.t) - e.t) / 60), stillThere: !left}]);
+  });
+  return v;
+}
+function streetsAlong(nodes){
+  const out = [];
+  for (let k = 0; k < nodes.length-1; k++){
+    const e = ADJ[nodes[k]].find(([v]) => v === nodes[k+1]), n = e && D.ways[e[2]][0];
+    if (n && out[out.length-1] !== n) out.push(n);
+  }
+  return out;
+}
+const TOOLS = {
+  get_status(){
+    const d = hyp(S.pos, P(HOMEN)), still = Math.round((S.t - S.lastMoveT) / 60);
+    return {
+      time: fmt(S.t), doing: $("#stTitle").textContent, where: spotText(S.pos), area: areaName(S.pos),
+      from_home: fromHome(S.pos), inside_safe_zone: S.inside, safe_zone_radius_m: settings.radius,
+      metres_to_edge_or_outside_by: Math.round(Math.abs(settings.radius - d)),
+      moving: S.state === "walking", heading: S.state === "walking" ? headingWord() : null,
+      minutes_since_last_moved: S.state === "walking" ? 0 : still, possible_fall: S.state === "fallen",
+      phone_battery_percent: Math.round(S.battery), coordinates: llText(S.pos),
+      open_alerts: S.alerts.filter(a => !a.ack).map(a => ({time: fmt(a.t), level: {crit: "urgent", warn: "check", info: "update"}[a.sev], title: a.title, detail: a.detail})),
+    };
+  },
+  get_movement({minutes = 60} = {}){
+    const since = S.t - Math.min(240, Math.max(5, minutes|0 || 60)) * 60;
+    // one entry per stretch: a stop at one spot, or about 2 minutes of walking
+    const out = [];
+    S.track.filter(p => p.t >= since).forEach(p => {
+      const where = spotText(p), last = out[out.length-1];
+      if (last && !p.moving && !last.moving && last.where === where){ last.until = fmt(p.t); return; }
+      if (last && p.moving && last.moving && p.t - last.t < 120) return;
+      out.push({t: p.t, time: fmt(p.t), until: fmt(p.t), where, from_home: fromHome(p), moving: p.moving});
+    });
+    return {from: fmt(since), to: fmt(S.t), stretches: out.map(({t, ...rest}) => rest)};
+  },
+  get_today_log(){
+    const steps = Math.round(S.steps.reduce((a,b) => a+b, 0));
+    return {
+      now: fmt(S.t), events: S.events.map(e => ({time: fmt(e.t), what: e.text})),
+      alerts: S.alerts.map(a => ({time: fmt(a.t), level: {crit: "urgent", warn: "check", info: "update"}[a.sev], title: a.title, detail: a.detail, status: a.ack ? (a.ack === "auto" ? "cleared when he came back" : "handled") : "open"})),
+      steps, km_walked: +(steps*0.72/1000).toFixed(1), minutes_out_of_home: Math.round(S.timeOut/60), times_left_safe_zone: S.leftCount,
+    };
+  },
+  find_places({from = "him", kinds, limit = 8} = {}){
+    const {dist} = dijkstra(fromNode(from)), base = from === "home" ? P(HOMEN) : S.pos, visits = visitsToday(), h = P(HOMEN);
+    return LMS.filter(l => !kinds || !kinds.length || kinds.includes(l.k))
+      .map(l => ({name: l.name, kind: l.k, walk_m: Math.round(dist[l.node]), direction: compass(l.x-base.x, l.y-base.y), inside_safe_zone: hyp(l, h) <= settings.radius, visited_today: visits.get(l.name) || []}))
+      .filter(p => isFinite(p.walk_m)).sort((a,b) => a.walk_m - b.walk_m).slice(0, Math.min(19, Math.max(1, limit|0 || 8)));
+  },
+  walking_route({to, from = "him"} = {}){
+    const l = lmByName(to); if (!l) throw new Error(`No place called "${to}". Use a name exactly as find_places returns it.`);
+    const nodes = path(fromNode(from), l.node);
+    let m = 0; for (let k = 0; k < nodes.length-1; k++) m += hyp(P(nodes[k]), P(nodes[k+1]));
+    return {from: from === "home" ? "home" : spotText(S.pos), to: l.name, walk_m: Math.round(m), minutes: Math.max(1, Math.round(m / WALK_MPM)), streets_in_order: streetsAlong(nodes)};
+  },
+  get_person_details(){
+    const ll = toLL(S.pos);
+    return {name: who(), age: $("#pAge").value.trim(), wearing: $("#pWear").value.trim(), how_to_approach: $("#pNotes").value.trim(), home: "11th Cross, 13th Main, Sahakarnagar, Bengaluru", last_position_map_link: `https://www.google.com/maps/search/?api=1&query=${ll.lat.toFixed(6)},${ll.lon.toFixed(6)}`, emergency_number: "112"};
+  },
+  mark_places_on_map({places = []} = {}){
+    const found = places.map(lmByName), missing = places.filter((n, i) => !found[i]);
+    showPins(found.filter(Boolean));
+    return {marked: found.filter(Boolean).map((l, i) => `${i+1}. ${l.name}`), not_found: missing};
+  },
+};
+const TOOL_STEP = {get_status: "Checking where he is now", get_movement: "Reading his recent path", get_today_log: "Reading today's record", find_places: "Looking at places nearby", walking_route: "Working out walking routes", get_person_details: "Reading his details", mark_places_on_map: "Marking places on the map"};
+
+const pinsG = $("#pins");
+function showPins(list){
+  pinsG.innerHTML = "";
+  list.forEach((l, i) => {
+    const g = el("g", {class: "mk always", "data-x": l.x, "data-y": l.y}, pinsG), sc = el("g", {class: "sc"}, g);
+    el("circle", {r: 13, fill: "var(--warn)", stroke: "var(--bg)", "stroke-width": 3}, sc);
+    el("text", {y: 4.5, "text-anchor": "middle", "font-size": 13, "font-weight": 700, fill: "#141618"}, sc).textContent = i + 1;
+  });
+  if (!list.length){ scaleMarks(); return; }
+  // fit him and the pins in view
+  const xs = [S.pos.x, ...list.map(l => l.x)], ys = [S.pos.y, ...list.map(l => l.y)];
+  const cw = svg.clientWidth || 800, ch = svg.clientHeight || 600;
+  setFollow(false);
+  vb.cx = (Math.min(...xs) + Math.max(...xs)) / 2; vb.cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  vb.w = Math.max(Math.max(...xs) - Math.min(...xs), (Math.max(...ys) - Math.min(...ys)) * cw / ch) + 300;
+  applyVB(); vb.cy -= 24*U; applyVB(); // room for the alert bar
+}
+
+function md(text){
+  const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  let html = "", list = null;
+  const close = () => { if (list){ html += `</${list}>`; list = null; } };
+  for (const raw of text.split("\n")){
+    const line = raw.trim(), h = line.match(/^#{1,4}\s+(.*)/), ul = line.match(/^[-*•]\s+(.*)/), ol = line.match(/^\d+[.)]\s+(.*)/);
+    if (!line){ close(); continue; }
+    if (h){ close(); html += `<h4>${inline(h[1])}</h4>`; }
+    else if (ul || ol){ const t = ul ? "ul" : "ol"; if (list !== t){ close(); html += `<${t}>`; list = t; } html += `<li>${inline((ul || ol)[1])}</li>`; }
+    else { close(); html += `<p>${inline(line)}</p>`; }
+  }
+  close(); return html;
+}
+
+let convo = [], busy = false;
+const HELPER_ERR = {
+  not_configured: "The search helper isn't switched on for this copy of the app yet.",
+  rate_limited: "Too many questions in a short time. Wait a few minutes and try again.",
+};
+async function askHelper(text, fresh){
+  if (busy || !text.trim()) return;
+  busy = true; $("#helperCard").classList.add("busy");
+  if (fresh){ convo = []; showPins([]); }
+  convo.push({role: "user", content: text.trim()});
+  const out = $("#helperOut"), steps = $("#helperSteps");
+  out.hidden = false; $("#helperAnswer").innerHTML = ""; steps.innerHTML = ""; $("#helperQ").textContent = text.trim(); $("#helperCopy").hidden = true;
+  const step = msg => { const li = document.createElement("li"); li.textContent = msg; steps.appendChild(li); };
+  step("Thinking");
+  try {
+    for (let round = 0; round < 12; round++){
+      const r = await fetch("api/helper", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({messages: convo})});
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(HELPER_ERR[data.error] || (r.status === 404 || r.status === 405 ? HELPER_ERR.not_configured : "The search helper couldn't answer just now. Try again in a moment."));
+      convo.push({role: "assistant", content: data.content});
+      if (data.stop_reason === "tool_use"){
+        const results = data.content.filter(b => b.type === "tool_use").map(b => {
+          step(TOOL_STEP[b.name] || "Working");
+          try { if (!TOOLS[b.name]) throw new Error("Unknown tool " + b.name); return {type: "tool_result", tool_use_id: b.id, content: JSON.stringify(TOOLS[b.name](b.input || {}))}; }
+          catch (e){ return {type: "tool_result", tool_use_id: b.id, content: e.message, is_error: true}; }
+        });
+        convo.push({role: "user", content: results});
+        continue;
+      }
+      if (data.stop_reason === "refusal") throw new Error("The search helper can't help with that one. For anything urgent, call 112.");
+      const answer = data.content.filter(b => b.type === "text").map(b => b.text).join("\n\n").trim();
+      $("#helperAnswer").innerHTML = md(answer || "No answer came back. Try asking again.") + (data.stop_reason === "max_tokens" ? `<p class="note">The answer was cut short.</p>` : "");
+      $("#helperCopy").hidden = !answer; $("#helperCopy").dataset.text = answer;
+      break;
+    }
+  } catch (e){
+    $("#helperAnswer").innerHTML = `<p class="helper-err">${esc(e.message)}</p>`;
+    convo = [];
+  } finally {
+    steps.innerHTML = ""; busy = false; $("#helperCard").classList.remove("busy");
+  }
+}
+const ASK = {
+  plan: () => `${who()} may be lost. Plan a search for us right now.`,
+  explain: () => "Explain the latest alert and tell us what to do next.",
+};
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-ask]"); if (!b) return;
+  askHelper(ASK[b.dataset.ask](), true);
+  if (b.closest(".alerts, .banner")) $("#helperCard").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start"});
+});
+$("#askForm").addEventListener("submit", e => { e.preventDefault(); const v = $("#askInput").value; $("#askInput").value = ""; askHelper(v, !convo.length); });
+$("#helperCopy").addEventListener("click", e => { try { navigator.clipboard.writeText(e.currentTarget.dataset.text); e.currentTarget.textContent = "Copied"; setTimeout(() => $("#helperCopy").textContent = "Copy answer", 1500); } catch(_){} });
+
 /* ---------- sound ---------- */
 let ac = null;
 function beep(){
@@ -745,6 +945,7 @@ document.querySelectorAll("[data-speed]").forEach(b => b.addEventListener("click
 }));
 function resetDay(){
   S = freshState(); lastAlertVer = lastEvVer = 0; placeHome();
+  if (!busy){ convo = []; showPins([]); $("#helperOut").hidden = true; }
   vb.cx = S.pos.x; vb.cy = S.pos.y; vb.w = svg.clientWidth && svg.clientWidth < 520 ? 850 : 1300; applyVB();
   SCEN.routine(); render();
 }
